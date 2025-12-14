@@ -1,0 +1,113 @@
+version: 0.2
+
+# AWS CodeBuild specification for Stock Market Analytics Dashboard
+# This file defines the build process for creating and pushing Docker images to ECR
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== Pre-Build Phase ==="
+      - echo "Build started on $(date)"
+      - echo "Logging in to Amazon ECR..."
+      
+      # Login to ECR
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      
+      # Generate image tag from Git commit hash (first 7 characters)
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:-latest}
+      - echo "Image will be tagged as $IMAGE_TAG"
+      
+      # Print environment information
+      - echo "AWS Region - $AWS_REGION"
+      - echo "ECR Registry - $ECR_REGISTRY"
+      - echo "ECR Repository - $ECR_REPOSITORY"
+      - echo "Image Tag - $IMAGE_TAG"
+
+  build:
+    commands:
+      - echo "=== Build Phase ==="
+      - echo "Installing Python dependencies..."
+      
+      # Install dependencies for testing
+      - pip install --upgrade pip
+      - pip install -r requirements.txt
+      
+      # Run tests
+      - echo "Running unit tests..."
+      - |
+        if [ -d "tests" ] && [ "$(ls -A tests/*.py 2>/dev/null)" ]; then
+          echo "Test files found, running pytest..."
+          pip install pytest pytest-cov
+          pytest tests/ --verbose --tb=short || {
+            echo "Tests failed! Build will not continue."
+            exit 1
+          }
+        else
+          echo "No test files found, skipping tests..."
+        fi
+      
+      # Build Docker image (look for Dockerfile in possible locations)
+      - echo "Building Docker image..."
+      # Pre-pull base image from Amazon ECR Public to avoid Docker Hub rate limits
+      - echo "Pulling base image from public ECR (fallback if already cached)..."
+      - docker pull public.ecr.aws/docker/library/python:3.11-slim || true
+      - |
+        if [ -f Dockerfile ]; then
+          docker build -t $ECR_REPOSITORY:latest -f Dockerfile .
+        elif [ -f ../Dockerfile ]; then
+          docker build -t $ECR_REPOSITORY:latest -f ../Dockerfile ..
+        elif [ -f docker/Dockerfile ]; then
+          docker build -t $ECR_REPOSITORY:latest -f docker/Dockerfile ..
+        else
+          echo "Dockerfile not found in current, parent, or docker/ directory."
+          exit 1
+        fi
+      
+      # Tag image with commit hash and latest
+      - docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      - docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      
+      - echo "Docker image built successfully"
+
+  post_build:
+    commands:
+      - echo "=== Post-Build Phase ==="
+      - echo "Build completed on $(date)"
+      
+      # Check if build was successful
+      - |
+        if [ $CODEBUILD_BUILD_SUCCEEDING -eq 1 ]; then
+          echo "Build succeeded, pushing Docker images to ECR..."
+          
+          # Push images to ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "Images pushed successfully:"
+          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          
+          # Create imagedefinitions.json for ECS deployment
+          echo "Creating imagedefinitions.json for ECS deployment..."
+          printf '[{"name":"stock-dashboard","imageUri":"%s"}]' $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG > imagedefinitions.json
+          
+          echo "imagedefinitions.json created:"
+          cat imagedefinitions.json
+        else
+          echo "Build failed, skipping image push"
+          exit 1
+        fi
+
+# Artifacts to be used by CodePipeline Deploy stage
+artifacts:
+  files:
+    - imagedefinitions.json
+  name: BuildArtifact
+
+# Cache Docker layers for faster builds
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
+    # Do not cache Docker runtime files (e.g. /var/lib/docker) in CodeBuild;
+    # caching these can cause overlay mount errors in the managed environment.

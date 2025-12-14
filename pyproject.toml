@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stock-market-dashboard"
+version = "1.0.0"
+description = "Stock Market Analytics Dashboard for educational purposes"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["stock", "market", "analytics", "dashboard", "streamlit", "technical-analysis"]
+
+[project.urls]
+Repository = "https://github.com/yourusername/stock-market-dashboard"
+Documentation = "https://github.com/yourusername/stock-market-dashboard/tree/main/docs"

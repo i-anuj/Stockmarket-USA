@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  stock-dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: stock-market-dashboard
+    ports:
+      - "8080:8080"
+    environment:
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
